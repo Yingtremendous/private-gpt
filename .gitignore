@@ -29,3 +29,10 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+
+#
+pdf
+false
+local_data
+notused

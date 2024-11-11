@@ -49,7 +49,7 @@ def load_settings_from_profile(profile: str) -> dict[str, Any]:
 
 def load_active_settings() -> dict[str, Any]:
     """Load active profiles and merge them."""
-    logger.info("Starting application with profiles=%s", active_profiles)
+    # logger.info("Starting application with profiles=%s", active_profiles)
     loaded_profiles = [
         load_settings_from_profile(profile) for profile in active_profiles
     ]

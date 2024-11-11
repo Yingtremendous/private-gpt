@@ -564,6 +564,26 @@ class QdrantSettings(BaseModel):
             "Only use this if you can guarantee that you can resolve the thread safety outside QdrantClient."
         ),
     )
+    container_name: str | None = Field(
+        "robertqdrant",
+        description="The name of the container name",
+    )
+    collection_name: str | None = Field(
+        "test1",
+        description="The name of the collection in Qdrant. Default is 'test1'.",
+    )
+    parallel: int | None = Field(
+        10,
+        description="The number of parallel requests to make to Qdrant. Default is 10.",
+    )
+    enable_hybrid: bool | None = Field(
+        False,
+        description="If set to True, the Qdrant will use hybrid search.",
+    )
+    async_mode: bool | None = Field(
+        True,
+        description="If set to True, the Qdrant will use async mode.",
+    )
 
 
 class MilvusSettings(BaseModel):
@@ -586,6 +606,19 @@ class MilvusSettings(BaseModel):
         True, description="Overwrite the previous collection schema if it exists."
     )
 
+class ParseSettings(BaseModel):
+    name: Literal["llamaparse", "simpleparse"] = Field(
+        "llamaparse",
+        description="The name of the parser to use for the ingestion.",)
+    api_key: str = Field(
+        "",
+        description="The API key to use for the parser. This is required for some parsers to work.",
+    )
+    async_mode: bool = Field(
+        True,
+        description="If set to True, the parser will use async mode.",
+    )
+    
 
 class Settings(BaseModel):
     server: ServerSettings
@@ -608,6 +641,7 @@ class Settings(BaseModel):
     postgres: PostgresSettings | None = None
     clickhouse: ClickHouseSettings | None = None
     milvus: MilvusSettings | None = None
+    parse: ParseSettings
 
 
 """
