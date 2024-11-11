@@ -8,5 +8,9 @@ embedding:
   mode: openai
 
 openai:
-  api_key: ${OPENAI_API_KEY:}
+<<<<<<< HEAD
+  api_key: ${OPENAI_API_KEY}
+=======
+  api_key: ${OPENAI_API_KEY}
+>>>>>>> temp
   model: gpt-4o
