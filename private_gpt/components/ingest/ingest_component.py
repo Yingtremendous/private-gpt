@@ -86,7 +86,6 @@ class BaseIngestComponentasync(abc.ABC):
     async def __async_del__(self) -> None:
         pass
 
-
 class BaseIngestComponentWithIndex(BaseIngestComponent, abc.ABC):
     def __init__(
         self,
@@ -233,7 +232,6 @@ class SimpleIngestComponent(BaseIngestComponentWithIndex):
             logger.debug("Persisted the index and nodes")
         return documents
 
-
 class BatchIngestComponent(BaseIngestComponentWithIndex):
     """Parallelize the file reading and parsing on multiple CPU core.
 
@@ -306,7 +304,6 @@ class BatchIngestComponent(BaseIngestComponentWithIndex):
             self._save_index()
             logger.debug("Persisted the index and nodes")
         return documents
-
 
 class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
     """Parallelize the file ingestion (file reading, embeddings, and index insertion).
@@ -455,6 +452,7 @@ class AsyncParallelizedIngestComponent(BaseIngestComponentWithIndexAsync):
         async with self._semaphore:
             logger.info("Async ingesting file_name=%s", file_name)
             try:
+                
                 documents = await self._transform_file_to_documents(file_name, file_data)
                 # logger.info(
                 #     "Transformed file=%s into count=%s documents",

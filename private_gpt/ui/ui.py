@@ -283,9 +283,10 @@ class PrivateGptUi:
             gr.update(value=self._explanation_mode),
         ]
 
-    def _list_ingested_files(self) -> list[list[str]]:
+    async def _list_ingested_files(self) -> list[list[str]]:
         files = set()
-        for ingested_document in self._ingest_service.list_ingested():
+        ingested_documents = await self._ingest_service.list_ingested()
+        for ingested_document in ingested_documents:
             if ingested_document.doc_metadata is None:
                 # Skipping documents without metadata
                 continue

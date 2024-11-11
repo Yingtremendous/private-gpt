@@ -2,6 +2,8 @@ import logging
 from pathlib import Path
 import os
 import asyncio
+import tempfile
+import shutil
 from tqdm import tqdm
 
 from private_gpt.settings.settings import settings
@@ -83,24 +85,68 @@ class IngestionHelper:
         file_name: str, file_data: Path
     ) -> list[Document]:
         if settings().parse.async_mode:
-            #todo rewrite the transform_file_into_documents method
-            file_paths = [file_data]
-            documents = await IngestionHelper._aload_file_to_documents(file_paths, 5)
-            documents = [doc for sublist in documents for doc in sublist]
-            async def process_document(doc):
-                doc.metadata["file_name"] = file_name
-                IngestionHelper._exclude_metadata([doc])
-                return doc
-            logger.info("Processing documents metadata")
-            documents = await asyncio.gather(*[process_document(doc) for doc in documents])
-            print(f"documents is : {documents}")
-            return documents
-        else:
-            documents = IngestionHelper._load_file_to_documents(file_name, file_data)
-            for document in documents:
-                document.metadata["file_name"] = file_name
-            IngestionHelper._exclude_metadata(documents)
-            return documents
+            
+            # 🔴 添加文件验证和处理
+            try:
+                # 创建带有正确扩展名的临时文件
+                temp_dir = Path(tempfile.gettempdir())
+                temp_file = temp_dir / file_name  # 使用原始文件名保持扩展名
+                
+                # 复制文件内容
+                shutil.copy2(file_data, temp_file)
+                logger.info(f"Created temporary file with extension: {temp_file}")
+
+                try:
+                    # 使用正确的文件路径
+                    documents = await IngestionHelper._aload_file_to_documents([temp_file], 5)
+                    
+                    if not documents or not documents[0]:
+                        logger.error("No documents generated from file")
+                        return []
+
+                    # 处理文档元数据
+                    async def process_document(doc):
+                        doc.metadata["file_name"] = file_name
+                        IngestionHelper._exclude_metadata([doc])
+                        return doc
+
+                    logger.info("Processing documents metadata")
+                    processed_docs = await asyncio.gather(*[process_document(doc) for doc in documents[0]])
+                    
+                    return processed_docs
+
+                finally:
+                    # 清理临时文件
+                    if temp_file.exists():
+                        temp_file.unlink()
+                        logger.debug(f"Cleaned up temporary file: {temp_file}")
+
+            except Exception as e:
+                logger.exception(f"Error processing file {file_name}: {e}")
+                return []
+            
+            
+            
+        #     #todo rewrite the transform_file_into_documents method
+        #     logger.info("Transforming file_name=%s into documents", file_name)
+        #     the_file = Path(file_data/file_name)
+        #     file_paths = [file_data]
+        #     documents = await IngestionHelper._aload_file_to_documents(file_paths, 5)
+        #     async def process_document(doc):
+        #         doc.metadata["file_name"] = file_name
+        #         IngestionHelper._exclude_metadata([doc])
+        #         return doc
+        #     logger.info("Processing documents metadata")
+        #     documents = await asyncio.gather(*[process_document(doc) for doc in documents[0]])
+        #     print(f"documents get content: {documents[0].get_content()}")
+            
+        #     return documents
+        # else:
+        #     documents = IngestionHelper._load_file_to_documents(file_name, file_data)
+        #     for document in documents:
+        #         document.metadata["file_name"] = file_name
+        #     IngestionHelper._exclude_metadata(documents)
+        #     return documents
 
     @staticmethod
     def _load_file_to_documents(file_name: str, file_data: Path) -> list[Document]:
@@ -123,11 +169,11 @@ class IngestionHelper:
         return documents
     
     @staticmethod
-    async def _aload_file_to_documents(file_paths: list[Path], batch_size: int) -> list[Document]:
+    async def _aload_file_to_documents(file_paths, batch_size: int) -> list[Document]:
         #todo: create a list of file paths 
         #todo: check parse using input_dir or input_file
         doc_paths= ["/home/gu/Documents/private-gpt/pdf/04_20210919_ISpec_FEBI_Operations_Inventur.pdf"]
-        with tqdm(total=len(doc_paths), desc="Parsing documents") as pbar:
+        with tqdm(total=len(file_paths), desc="Parsing documents") as pbar:
             if not file_paths:
                 logger.error("No files to parse")
                 return []
@@ -139,19 +185,35 @@ class IngestionHelper:
                                     show_progress=True,
                                     language="de",
                                     page_separator="\n== {pageNumber} ==\n",
-                                    use_vendor_multimodal_model=True,
-                                    vendor_multimodal_model_name="openai-gpt4o",
-                                    vendor_multimodal_api_key= os.getenv("OPENAI_API"),
+                                    use_vendor_multimodal_model=False,
+                                    # vendor_multimodal_model_name="openai-gpt4o",
+                                    # vendor_multimodal_api_key= os.getenv("OPENAI_API"),
                                     premium_mode=True) #todo: refacor
                 alldocuments = []
                 errors = []
                 
-                async def safe_load(path):
+                async def safe_load(file_paths):
                     try:
-                        return await parser.aload_data(path)
+                        if not file_paths.exists():
+                            logger.error(f"File does not exist: {file_paths}")
+                            return None
+
+                        if file_paths.suffix.lower() not in ['.pdf', '.docx', '.txt']:
+                            logger.error(f"Unsupported file type: {file_paths.suffix}")
+                            return None
+
+                        logger.info(f"Parsing file: {file_paths}")
+                        return await parser.aload_data(str(file_paths))
+
                     except Exception as e:
-                        errors.append((path, e))
+                        logger.exception(f"Error parsing file {file_paths}: {e}")
                         return None
+                    # try:
+                    #     logger.info("xxxxxxxxxxxxxxxxxxxxx Parsing file=%s", file_paths)
+                    #     return await parser.aload_data(file_paths)
+                    # except Exception as e:
+                    #     errors.append((file_paths, e))
+                    #     return None
                 if len(file_paths) < batch_size:
                     alldocuments = await asyncio.gather(*[safe_load(doc_path) for doc_path in file_paths])
                 else:

@@ -9,6 +9,7 @@ from llama_index.core.vector_stores.types import (
     MetadataFilter,
     MetadataFilters,
 )
+import nest_asyncio
 
 from private_gpt.open_ai.extensions.context_filter import ContextFilter
 from private_gpt.paths import local_data_path

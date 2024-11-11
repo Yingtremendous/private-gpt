@@ -93,6 +93,8 @@ def list_ingested(request: Request) -> IngestResponse:
     return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
 
 
+
+
 @ingest_router.delete("/ingest/{doc_id}", tags=["Ingestion"])
 def delete_ingested(request: Request, doc_id: str) -> None:
     """Delete the specified ingested Document.
@@ -102,3 +104,42 @@ def delete_ingested(request: Request, doc_id: str) -> None:
     """
     service = request.state.injector.get(IngestService)
     service.delete(doc_id)
+
+##########################################################################
+##########################################################################
+################   async version of ingest_router.py   ####################
+##########################################################################
+@ingest_router.post("/ingest/afile", tags=["Ingestion"])
+async def ingest_file(request: Request, file: UploadFile) -> IngestResponse:
+    """Ingests and processes a file, storing its chunks to be used as context.
+
+    The context obtained from files is later used in
+    `/chat/completions`, `/completions`, and `/chunks` APIs.
+
+    Most common document
+    formats are supported, but you may be prompted to install an extra dependency to
+    manage a specific file type.
+
+    A file can generate different Documents (for example a PDF generates one Document
+    per page). All Documents IDs are returned in the response, together with the
+    extracted Metadata (which is later used to improve context retrieval). Those IDs
+    can be used to filter the context used to create responses in
+    `/chat/completions`, `/completions`, and `/chunks` APIs.
+    """
+    service = request.state.injector.get(IngestService)
+    if file.filename is None:
+        raise HTTPException(400, "No file name provided")
+    ingested_documents = await service.ingest_bin_data(file.filename, file.file)
+    return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
+
+
+@ingest_router.get("/ingest/alist", tags=["Ingestion"])
+async def list_ingested(request: Request) -> IngestResponse:
+    """Lists already ingested Documents including their Document ID and metadata.
+
+    Those IDs can be used to filter the context used to create responses
+    in `/chat/completions`, `/completions`, and `/chunks` APIs.
+    """
+    service = request.state.injector.get(IngestService)
+    ingested_documents = await service.list_ingested()
+    return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
