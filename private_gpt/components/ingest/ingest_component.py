@@ -7,7 +7,11 @@ import os
 import threading
 from pathlib import Path
 from queue import Queue
-from typing import Any
+from typing import Any, List
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from contextlib import asynccontextmanager
+import time
 
 from llama_index.core.data_structs import IndexDict
 from llama_index.core.embeddings.utils import EmbedType
@@ -42,13 +46,44 @@ class BaseIngestComponent(abc.ABC):
     @abc.abstractmethod
     def ingest(self, file_name: str, file_data: Path) -> list[Document]:
         pass
+    
+
 
     @abc.abstractmethod
     def bulk_ingest(self, files: list[tuple[str, Path]]) -> list[Document]:
         pass
+    
+
 
     @abc.abstractmethod
     def delete(self, doc_id: str) -> None:
+        pass
+    
+
+class BaseIngestComponentasync(abc.ABC):
+    def __init__(
+        self,
+        storage_context: StorageContext,
+        embed_model: EmbedType,
+        transformations: list[TransformComponent],
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        logger.debug("Initializing base ingest component type=%s", type(self).__name__)
+        self.storage_context = storage_context
+        self.embed_model = embed_model
+        self.transformations = transformations
+
+    # async methods
+    @abc.abstractclassmethod
+    async def async_ingest(self, file_name: str, file_data: Path) -> list[Document]:
+        pass
+    @abc.abstractmethod
+    async def async_bulk_ingest(self, files: list[tuple[str, Path]]) -> list[Document]:
+        pass
+    
+    @abc.abstractmethod
+    async def __async_del__(self) -> None:
         pass
 
 
@@ -105,6 +140,58 @@ class BaseIngestComponentWithIndex(BaseIngestComponent, abc.ABC):
             # Save the index
             self._save_index()
 
+class BaseIngestComponentWithIndexAsync(BaseIngestComponentasync, abc.ABC):
+    def __init__(
+        self,
+        storage_context: StorageContext,
+        embed_model: EmbedType,
+        transformations: list[TransformComponent],
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(storage_context, embed_model, transformations, *args, **kwargs)
+
+        self.show_progress = True
+        self._index_thread_lock = (
+            threading.Lock()
+        )  # Thread lock! Not Multiprocessing lock
+        self._index = self._initialize_index()
+
+    def _initialize_index(self) -> BaseIndex[IndexDict]:
+        """Initialize the index from the storage context."""
+        try:
+            # Load the index with store_nodes_override=True to be able to delete them
+            index = load_index_from_storage(
+                storage_context=self.storage_context,
+                store_nodes_override=True,  # Force store nodes in index and document stores
+                show_progress=self.show_progress,
+                embed_model=self.embed_model,
+                transformations=self.transformations,
+            )
+        except ValueError:
+            # There are no index in the storage context, creating a new one
+            logger.info("Creating a new vector store index")
+            index = VectorStoreIndex.from_documents(
+                [],
+                storage_context=self.storage_context,
+                store_nodes_override=True,  # Force store nodes in index and document stores
+                show_progress=self.show_progress,
+                embed_model=self.embed_model,
+                transformations=self.transformations,
+            )
+            index.storage_context.persist(persist_dir=local_data_path)
+        return index
+
+    def _save_index(self) -> None:
+        self._index.storage_context.persist(persist_dir=local_data_path)
+
+    def delete(self, doc_id: str) -> None:
+        with self._index_thread_lock:
+            # Delete the document from the index
+            self._index.delete_ref_doc(doc_id, delete_from_docstore=True)
+
+            # Save the index
+            self._save_index()
 
 class SimpleIngestComponent(BaseIngestComponentWithIndex):
     def __init__(
@@ -238,15 +325,11 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
         **kwargs: Any,
     ) -> None:
         super().__init__(storage_context, embed_model, transformations, *args, **kwargs)
-        # To make an efficient use of the CPU and GPU, the embeddings
-        # must be in the transformations (to be computed in batches)
         assert (
             len(self.transformations) >= 2
         ), "Embeddings must be in the transformations"
         assert count_workers > 0, "count_workers must be > 0"
         self.count_workers = count_workers
-        # We are doing our own multiprocessing
-        # To do not collide with the multiprocessing of huggingface, we disable it
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
         self._ingest_work_pool = multiprocessing.pool.ThreadPool(
@@ -259,8 +342,6 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
 
     def ingest(self, file_name: str, file_data: Path) -> list[Document]:
         logger.info("Ingesting file_name=%s", file_name)
-        # Running in a single (1) process to release the current
-        # thread, and take a dedicated CPU core for computation
         documents = self._file_to_documents_work_pool.apply(
             IngestionHelper.transform_file_into_documents, (file_name, file_data)
         )
@@ -271,8 +352,6 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
         return self._save_docs(documents)
 
     def bulk_ingest(self, files: list[tuple[str, Path]]) -> list[Document]:
-        # Lightweight threads, used for parallelize the
-        # underlying IO calls made in the ingestion
 
         documents = list(
             itertools.chain.from_iterable(
@@ -288,7 +367,6 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
             self.transformations,
             show_progress=self.show_progress,
         )
-        # Locking the index to avoid concurrent writes
         with self._index_thread_lock:
             logger.info("Inserting count=%s nodes in the index", len(nodes))
             self._index.insert_nodes(nodes, show_progress=True)
@@ -297,15 +375,12 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
                     document.get_doc_id(), document.hash
                 )
             logger.debug("Persisting the index and nodes")
-            # persist the index and nodes
             self._save_index()
             logger.debug("Persisted the index and nodes")
         return documents
 
     def __del__(self) -> None:
-        # We need to do the appropriate cleanup of the multiprocessing pools
-        # when the object is deleted. Using root logger to avoid
-        # the logger to be deleted before the pool
+
         logging.debug("Closing the ingest work pool")
         self._ingest_work_pool.close()
         self._ingest_work_pool.join()
@@ -315,6 +390,170 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
         self._file_to_documents_work_pool.join()
         self._file_to_documents_work_pool.terminate()
 
+class AsyncParallelizedIngestComponent(BaseIngestComponentWithIndexAsync):
+    """Parallelize the file ingestion (file reading, embeddings, and index insertion).
+
+    This uses the CPU and GPU in parallel (both running at the same time), and
+    reduces the memory pressure by not loading all the files in memory at the same time.
+    """
+
+    def __init__(
+        self,
+        storage_context: StorageContext,
+        embed_model: EmbedType,
+        transformations: list[TransformComponent],
+        count_workers: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(storage_context, embed_model, transformations, *args, **kwargs)
+        # To make efficient use of the CPU and GPU, the embeddings
+        # must be in the transformations (to be computed in batches)
+        assert (
+            len(self.transformations) >= 2
+        ), "Embeddings must be in the transformations"
+        assert count_workers > 0, "count_workers must be > 0"
+
+        self.count_workers = count_workers
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+        # Initialize process and thread pools
+        self._process_pool = ProcessPoolExecutor(max_workers=self.count_workers)
+        self._thread_pool = ThreadPoolExecutor(max_workers=self.count_workers)
+        self._semaphore = asyncio.Semaphore(self.count_workers)
+        logger.info("AsyncParallelizedIngestComponent initialized")
+
+    async def _transform_file_to_documents(
+        self,
+        file_name: str,
+        file_data: Path,
+    ) -> list[Document]:
+        try:
+            documents = await IngestionHelper.transform_file_into_documents(
+                file_name, file_data
+            )
+            return documents
+        except Exception as e:
+            logger.error(f"Error processing file {file_name}: {e}")
+            return []
+        # def sync_transform(
+        #     file_name: str,
+        #     file_data: Path,
+        # ) -> List[Document]:
+        #     try:
+        #         return IngestionHelper.transform_file_into_documents(file_name, file_data)
+        #     except Exception as e:
+        #         logger.error(f"Error processing file {file_name}: {e}")
+        #         return []
+
+        # loop = asyncio.get_event_loop()
+        # return await loop.run_in_executor(
+        #     self._thread_pool, sync_transform, file_name, file_data
+        # )
+
+    async def async_ingest(self, file_name: str, file_data: Path) -> list[Document]:
+        async with self._semaphore:
+            logger.info("Async ingesting file_name=%s", file_name)
+            try:
+                documents = await self._transform_file_to_documents(file_name, file_data)
+                # logger.info(
+                #     "Transformed file=%s into count=%s documents",
+                #     file_name,
+                #     len(documents),
+                # )
+                if documents:
+                    return await self._save_docs(documents)
+                return []
+            except Exception as e:
+                logger.error(f"Error processing file {file_name}: {e}")
+                return []
+
+    async def async_bulk_ingest(
+        self, files: list[tuple[str, Path]]
+    ) -> list[Document]:
+        async def process_batch(batch: list[tuple[str, Path]]) -> list[Document]:
+            tasks = [
+                self.async_ingest(file_name, file_data)
+                for file_name, file_data in batch
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            successful_results = []
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"Error processing file: {result}")
+                else:
+                    successful_results.extend(result)
+            return successful_results
+
+        batch_size = 5  # TODO: Determine the best batch size
+        all_documents = []
+        for i in range(0, len(files), batch_size):
+            batch = files[i : i + batch_size]
+            documents = await process_batch(batch)
+            all_documents.extend(documents)
+        return all_documents
+
+    async def _save_docs(self, documents: list[Document]) -> list[Document]:
+        if not documents:
+            return []
+
+        # logger.debug("Transforming count=%s documents into nodes", len(documents))
+
+        loop = asyncio.get_running_loop()
+        nodes = await loop.run_in_executor(
+            self._thread_pool,
+            lambda: run_transformations(
+                documents,  # type: ignore[arg-type]
+                self.transformations,
+                show_progress=self.show_progress,
+            ),
+        )
+        async with self._async_index_lock():
+            try:
+                # logger.info("Inserting count=%s nodes into the index", len(nodes))
+                await loop.run_in_executor(
+                    self._thread_pool,
+                    self._insert_nodes_and_save,
+                    nodes,
+                    documents,
+                )
+                return documents
+            except Exception as e:
+                logger.error(f"Error saving documents: {e}")
+                return []
+
+    def _insert_nodes_and_save(
+        self, nodes: list[BaseNode], documents: list[Document]
+    ) -> None:
+        with self._index_thread_lock:
+            self._index.insert_nodes(nodes, show_progress=True)
+            for document in documents:
+                self._index.docstore.set_document_hash(
+                    document.get_doc_id(), document.hash
+                )
+            self._save_index()
+
+    @asynccontextmanager
+    async def _async_index_lock(self):
+        try:
+            await asyncio.sleep(0)
+            yield
+        finally:
+            await asyncio.sleep(0)
+
+    async def __async_del__(self) -> None:
+        logger.debug("Cleaning up resources...")
+
+        self._process_pool.shutdown(wait=True)
+        self._thread_pool.shutdown(wait=True)
+
+        logger.debug("Resources cleaned up")
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, exc_tb):
+        await self.__async_del__()
 
 class PipelineIngestComponent(BaseIngestComponentWithIndex):
     """Pipeline ingestion - keeping the embedding worker pool as busy as possible.
@@ -373,6 +612,7 @@ class PipelineIngestComponent(BaseIngestComponentWithIndex):
         ] = Queue(40)
         threading.Thread(target=self._doc_to_node, daemon=True).start()
         threading.Thread(target=self._write_nodes, daemon=True).start()
+        logger.info("Pipeline ingest component initialized")
 
     def _doc_to_node(self) -> None:
         # Parse documents into nodes
@@ -487,7 +727,11 @@ def get_ingestion_component(
     settings: Settings,
 ) -> BaseIngestComponent:
     """Get the ingestion component for the given configuration."""
-    ingest_mode = settings.embedding.ingest_mode
+    if settings.parse.async_mode:
+        ingest_mode = "asyncparallel"
+    else:
+        ingest_mode = settings.embedding.ingest_mode
+    
     if ingest_mode == "batch":
         return BatchIngestComponent(
             storage_context=storage_context,
@@ -502,12 +746,20 @@ def get_ingestion_component(
             transformations=transformations,
             count_workers=settings.embedding.count_workers,
         )
-    elif ingest_mode == "pipeline":
+    elif ingest_mode == "c":
         return PipelineIngestComponent(
             storage_context=storage_context,
             embed_model=embed_model,
             transformations=transformations,
             count_workers=settings.embedding.count_workers,
+        )
+    elif ingest_mode == "asyncparallel":
+        count_workers = multiprocessing.cpu_count()
+        return AsyncParallelizedIngestComponent(
+            storage_context=storage_context,
+            embed_model=embed_model,
+            transformations=transformations,
+            count_workers=count_workers,
         )
     else:
         return SimpleIngestComponent(

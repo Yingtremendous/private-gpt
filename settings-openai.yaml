@@ -8,5 +8,5 @@ embedding:
   mode: openai
 
 openai:
-  api_key: ${OPENAI_API_KEY:}
-  model: gpt-3.5-turbo
+  api_key: ${OPENAI_API_KEY}
+  model: gpt-4o

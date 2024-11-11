@@ -1,13 +1,25 @@
 import logging
 from pathlib import Path
+import os
+import asyncio
+from tqdm import tqdm
+
+from private_gpt.settings.settings import settings
 
 from llama_index.core.readers import StringIterableReader
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.readers.json import JSONReader
 from llama_index.core.schema import Document
 
+# try llama-parse
+from llama_parse import LlamaParse
+from llama_index.core import SimpleDirectoryReader
+
 logger = logging.getLogger(__name__)
 
+# get llama-parse key
+from dotenv import load_dotenv
+load_dotenv()
 
 # Inspired by the `llama_index.core.readers.file.base` module
 def _try_loading_included_file_formats() -> dict[str, type[BaseReader]]:
@@ -59,7 +71,6 @@ FILE_READER_CLS.update(
     }
 )
 
-
 class IngestionHelper:
     """Helper class to transform a file into a list of documents.
 
@@ -68,14 +79,28 @@ class IngestionHelper:
     """
 
     @staticmethod
-    def transform_file_into_documents(
+    async def transform_file_into_documents(
         file_name: str, file_data: Path
     ) -> list[Document]:
-        documents = IngestionHelper._load_file_to_documents(file_name, file_data)
-        for document in documents:
-            document.metadata["file_name"] = file_name
-        IngestionHelper._exclude_metadata(documents)
-        return documents
+        if settings().parse.async_mode:
+            #todo rewrite the transform_file_into_documents method
+            file_paths = [file_data]
+            documents = await IngestionHelper._aload_file_to_documents(file_paths, 5)
+            documents = [doc for sublist in documents for doc in sublist]
+            async def process_document(doc):
+                doc.metadata["file_name"] = file_name
+                IngestionHelper._exclude_metadata([doc])
+                return doc
+            logger.info("Processing documents metadata")
+            documents = await asyncio.gather(*[process_document(doc) for doc in documents])
+            print(f"documents is : {documents}")
+            return documents
+        else:
+            documents = IngestionHelper._load_file_to_documents(file_name, file_data)
+            for document in documents:
+                document.metadata["file_name"] = file_name
+            IngestionHelper._exclude_metadata(documents)
+            return documents
 
     @staticmethod
     def _load_file_to_documents(file_name: str, file_data: Path) -> list[Document]:
@@ -90,15 +115,57 @@ class IngestionHelper:
             # Read as a plain text
             string_reader = StringIterableReader()
             return string_reader.load_data([file_data.read_text()])
-
         logger.debug("Specific reader found for extension=%s", extension)
         documents = reader_cls().load_data(file_data)
-
         # Sanitize NUL bytes in text which can't be stored in Postgres
         for i in range(len(documents)):
             documents[i].text = documents[i].text.replace("\u0000", "")
-
         return documents
+    
+    @staticmethod
+    async def _aload_file_to_documents(file_paths: list[Path], batch_size: int) -> list[Document]:
+        #todo: create a list of file paths 
+        #todo: check parse using input_dir or input_file
+        doc_paths= ["/home/gu/Documents/private-gpt/pdf/04_20210919_ISpec_FEBI_Operations_Inventur.pdf"]
+        with tqdm(total=len(doc_paths), desc="Parsing documents") as pbar:
+            if not file_paths:
+                logger.error("No files to parse")
+                return []
+            if settings().parse.name == "llamaparse":
+                logger.info("Using LlamaParse to parse the file")
+                parser = LlamaParse(result_type="markdown", 
+                                    num_workers=8, 
+                                    check_interval=10, 
+                                    show_progress=True,
+                                    language="de",
+                                    page_separator="\n== {pageNumber} ==\n",
+                                    use_vendor_multimodal_model=True,
+                                    vendor_multimodal_model_name="openai-gpt4o",
+                                    vendor_multimodal_api_key= os.getenv("OPENAI_API"),
+                                    premium_mode=True) #todo: refacor
+                alldocuments = []
+                errors = []
+                
+                async def safe_load(path):
+                    try:
+                        return await parser.aload_data(path)
+                    except Exception as e:
+                        errors.append((path, e))
+                        return None
+                if len(file_paths) < batch_size:
+                    alldocuments = await asyncio.gather(*[safe_load(doc_path) for doc_path in file_paths])
+                else:
+                    for i in range(0, len(file_paths), batch_size):
+                        batch = file_paths[i:i+batch_size]
+                        batch_tasks = [safe_load(doc_path) for doc_path in batch]
+                        batch_results = await asyncio.gather(*batch_tasks)
+                        alldocuments.extend(batch_results)
+                        pbar.update(len(batch))
+                return alldocuments
+            else:
+                logger.error("Invalid parser name")
+                
+
 
     @staticmethod
     def _exclude_metadata(documents: list[Document]) -> None:
@@ -109,3 +176,74 @@ class IngestionHelper:
             document.excluded_embed_metadata_keys = ["doc_id"]
             # We don't want the LLM to receive these metadata in the context
             document.excluded_llm_metadata_keys = ["file_name", "doc_id", "page_label"]
+
+
+        """
+        import asyncio
+from typing import List, Any, Optional
+from contextlib import asynccontextmanager
+
+class BatchProcessor:
+    def __init__(self, batch_size: int = 5, max_concurrent: int = 3):
+        self.batch_size = batch_size
+        self.max_concurrent = max_concurrent
+        self.parser = LlamaParse()
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+    
+    @asynccontextmanager
+    async def get_parser(self):
+        async with self.semaphore:
+            yield self.parser
+    
+    async def process_single_file(self, path: str) -> Any:
+        async with self.get_parser() as parser:
+            return await parser.aload_data(path)
+    
+    async def batch_process_files(
+        self,
+        file_paths: List[str],
+        cancel_event: Optional[asyncio.Event] = None
+    ) -> List[Any]:
+        if not file_paths:
+            return []
+        
+        results = []
+        actual_batch_size = min(self.batch_size, len(file_paths))
+        
+        for i in range(0, len(file_paths), actual_batch_size):
+            # 检查是否请求取消
+            if cancel_event and cancel_event.is_set():
+                break
+                
+            batch = file_paths[i:i + actual_batch_size]
+            batch_tasks = [self.process_single_file(path) for path in batch]
+            
+            try:
+                batch_results = await asyncio.gather(*batch_tasks)
+                results.extend(batch_results)
+            except Exception as e:
+                print(f"Batch processing error: {str(e)}")
+                continue
+        
+        return results
+
+# 使用示例
+async def main():
+    file_paths = ["file1.pdf", "file2.pdf", "file3.pdf"]
+    processor = BatchProcessor(batch_size=5, max_concurrent=3)
+    
+    # 创建取消事件
+    cancel_event = asyncio.Event()
+    
+    # 启动处理
+    try:
+        results = await processor.batch_process_files(file_paths, cancel_event)
+        print(f"Processed {len(results)} files successfully")
+    except Exception as e:
+        print(f"Processing failed: {str(e)}")
+        # 设置取消事件
+        cancel_event.set()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+        """

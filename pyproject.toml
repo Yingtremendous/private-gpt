@@ -12,7 +12,6 @@ python-multipart = "^0.0.10"
 injector = "^0.22.0"
 pyyaml = "^6.0.2"
 watchdog = "^4.0.1"
-transformers = "^4.44.2"
 docx2txt = "^0.8"
 cryptography = "^3.1"
 # LlamaIndex core libs
@@ -59,6 +58,7 @@ ffmpy = {version ="^0.4.0", optional = true}
 # Optional HF Transformers
 einops = {version = "^0.8.0", optional = true}
 retry-async = "^0.1.4"
+llama-parse = "^0.5.13"
 
 [tool.poetry.extras]
 ui = ["gradio", "ffmpy"]

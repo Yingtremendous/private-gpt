@@ -18,7 +18,7 @@ server:
 
 data:
   local_ingestion:
-    enabled: ${LOCAL_INGESTION_ENABLED:false}
+    enabled: ${LOCAL_INGESTION_ENABLED:true}
     allow_ingest_from: ["*"]
   local_data_folder: local_data/private_gpt
 
@@ -108,8 +108,21 @@ milvus:
   collection_name: milvus_db
   overwrite: false
 
+# qdrant:
+#   path: local_data/private_gpt/qdrant
+
 qdrant:
-  path: local_data/private_gpt/qdrant
+  async_mode: false
+  container_name: localhost
+  port: 6333
+  collection_name: test3
+  parallel: 10
+  enable_hybird: false
+  batch_size: 64 
+  fastembed_sparse_model: nomic-ai/nomic-embed-text-v1.5
+  sparse_doc_fn:  nomic-ai/nomic-embed-text-v1.5
+  sparse_query_fn : nomic-ai/nomic-embed-text-v1.5
+  hybrid_doc_fn: nomic-ai/nomic-embed-text-v1.5
 
 postgres:
   host: localhost
@@ -150,3 +163,8 @@ gemini:
   api_key: ${GOOGLE_API_KEY:}
   model: models/gemini-pro
   embedding_model: models/embedding-001
+
+parse:
+  name: llamaparse
+  api_key: ${LLAMAPARSE_API_KEY:}
+  async_mode: true
