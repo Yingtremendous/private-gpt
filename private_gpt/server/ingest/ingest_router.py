@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field, field_validator
 from private_gpt.server.ingest.ingest_service import IngestService
 from private_gpt.server.ingest.model import IngestedDoc
 from private_gpt.server.utils.auth import authenticated
+import logging
+logger = logging.getLogger(__name__)    
 
 ingest_router = APIRouter(prefix="/v1", dependencies=[Depends(authenticated)])
 
@@ -138,6 +140,7 @@ async def ingest_file(request: Request, file: UploadFile, docmeta: Annotated[str
     can be used to filter the context used to create responses in
     `/chat/completions`, `/completions`, and `/chunks` APIs.
     """
+    logger.info(f"----------  ingestion router  ----------")
     service = request.state.injector.get(IngestService)
 
     try: 
@@ -178,3 +181,49 @@ async def list_ingested(request: Request) -> IngestResponse:
     service = request.state.injector.get(IngestService)
     ingested_documents = await service.list_ingested()
     return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
+
+
+
+@ingest_router.post("/ingest/amfile", tags=["Ingestion"])
+async def ingest_file(request: Request, file: UploadFile, docmeta: Annotated[str, Form()]) -> IngestResponse:
+    """Ingests and processes a file, storing its chunks to be used as context.
+
+    The context obtained from files is later used in
+    `/chat/completions`, `/completions`, and `/chunks` APIs.
+
+    Most common document
+    formats are supported, but you may be prompted to install an extra dependency to
+    manage a specific file type.
+
+    A file can generate different Documents (for example a PDF generates one Document
+    per page). All Documents IDs are returned in the response, together with the
+    extracted Metadata (which is later used to improve context retrieval). Those IDs
+    can be used to filter the context used to create responses in
+    `/chat/completions`, `/completions`, and `/chunks` APIs.
+    """
+    service = request.state.injector.get(IngestService)
+
+    try: 
+        docmeta_dict = json.loads(docmeta)
+        docmeta_obj = DocumentMetadadta(**docmeta_dict)
+        
+        if file.filename is None:
+            raise HTTPException(400, "No file name provided")
+        
+        ingested_documents = await service.ingest_bin_data(file.filename, file.file, docmeta_obj)
+        return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON format in docmeta"
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid metadata: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred: {str(e)}" 
+        )

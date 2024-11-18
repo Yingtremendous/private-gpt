@@ -3,6 +3,8 @@ from pathlib import Path
 import os
 import asyncio
 from tqdm import tqdm
+import shutil
+import tempfile
 
 from private_gpt.settings.settings import settings
 
@@ -83,24 +85,39 @@ class IngestionHelper:
         file_name: str, file_data: Path, docmeta
         ) -> list[Document]:
         if settings().parse.async_mode:
-            #todo rewrite the transform_file_into_documents method
-            file_paths = [file_data]
-            documents = await IngestionHelper._aload_file_to_documents(file_paths, 5, docmeta)
-            documents = [doc for sublist in documents for doc in sublist]
-            async def process_document(doc):
-                doc.metadata["file_name"] = file_name
-                IngestionHelper._exclude_metadata([doc])
-                return doc
-            logger.info("Processing documents metadata")
-            documents = await asyncio.gather(*[process_document(doc) for doc in documents])
-            print(f"documents is : {documents}")
-            return documents
-        else:
-            documents = IngestionHelper._load_file_to_documents(file_name, file_data)
-            for document in documents:
-                document.metadata["file_name"] = file_name
-            IngestionHelper._exclude_metadata(documents)
-            return documents
+            try:
+                temp_dir = Path(tempfile.gettempdir())
+                temp_file = temp_dir / file_name  # 使用原始文件名保持扩展名
+
+                shutil.copy2(file_data, temp_file)
+                logger.info(f"Created temporary file with extension: {temp_file}")
+
+                try:
+                    documents = await IngestionHelper._aload_file_to_documents([temp_file], 5, docmeta)
+                    
+                    if not documents or not documents[0]:
+                        logger.error("No documents generated from file")
+                        return []
+
+                    async def process_document(doc):
+                        doc.metadata["file_name"] = file_name
+                        IngestionHelper._exclude_metadata([doc])
+                        return doc
+
+                    logger.info("Processing documents metadata")
+                    processed_docs = await asyncio.gather(*[process_document(doc) for doc in documents[0]])
+                    logger.info(f"Successfully processed {processed_docs} documents")
+                    return processed_docs
+
+                finally:
+                    # 清理临时文件
+                    if temp_file.exists():
+                        temp_file.unlink()
+                        logger.debug(f"Cleaned up temporary file: {temp_file}")
+
+            except Exception as e:
+                logger.exception(f"Error processing file {file_name}: {e}")
+                return []
 
     @staticmethod
     def _load_file_to_documents(file_name: str, file_data: Path) -> list[Document]:
@@ -186,8 +203,8 @@ class IngestionHelper:
                         pbar.update(len(batch))
                 logger.info(f"Successfully parsed {alldocuments[0]} documents")
                 # get text
-                logger.info(f"get detail of the parsed document documents: \n{alldocuments[0][0].text} ") 
-                logger.info(f"get detail of the parsed document documents: \n{alldocuments[0][0].metadata}") 
+                # logger.info(f"get detail of the parsed document documents: \n{alldocuments[0][0].text} ") 
+                # logger.info(f"get detail of the parsed document documents: \n{alldocuments[0][0].metadata}") 
                 # hier wird kein metadata zurückgegeben
                 # logger.info(f"get detail of the parsed document documents: {alldocuments[0][0].text.split[[1]} ")
                 return alldocuments

@@ -20,7 +20,7 @@ data:
   local_ingestion:
     enabled: ${LOCAL_INGESTION_ENABLED:true}
     allow_ingest_from: ["*"]
-  local_data_folder: qdrant_storage # qdrant_data/qdrant_data
+  local_data_folder: qdrant_data/qdrant_data
 
 ui:
   enabled: false
