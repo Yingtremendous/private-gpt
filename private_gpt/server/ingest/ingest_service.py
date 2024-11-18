@@ -67,7 +67,7 @@ class IngestService:
 
     def ingest_file(self, file_name: str, file_data: Path, docmeta) -> list[IngestedDoc]:
         logger.info("Ingesting file_name=%s", file_name)
-        documents = self.ingest_component.ingest(file_name, file_data , docmeta)
+        documents = self.ingest_component.ingest(file_name, file_data, docmeta)
         logger.info("Finished ingestion file_name=%s", file_name)
         return [IngestedDoc.from_document(document) for document in documents]
 
