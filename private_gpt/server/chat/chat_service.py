@@ -103,6 +103,9 @@ class ChatService:
             llm=llm_component.llm,
             embed_model=embedding_component.embedding_model,
             show_progress=True,
+            similarity_top_k=settings.qdrant.similarity_top_k,
+            sparse_top_k=settings.qdrant.sparse_top_k,
+            vector_store_query_mode = "hybrid",
         )
 
     def _chat_engine(

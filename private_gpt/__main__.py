@@ -1,4 +1,7 @@
 # start a fastapi server with uvicorn
+# -----------------  for  async  -----------------
+import nest_asyncio
+nest_asyncio.apply()
 
 import uvicorn
 

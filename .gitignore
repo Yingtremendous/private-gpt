@@ -36,3 +36,5 @@ pdf
 false
 local_data
 notused
+qdrant_storage
+qdrant_data

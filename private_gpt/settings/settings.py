@@ -206,7 +206,7 @@ class EmbeddingSettings(BaseModel):
         "gemini",
         "mistralai",
     ]
-    ingest_mode: Literal["simple", "batch", "parallel", "pipeline"] = Field(
+    ingest_mode: Literal["simple", "batch", "parallel", "pipeline", "asyncparallel"] = Field(
         "simple",
         description=(
             "The ingest mode to use for the embedding engine:\n"
@@ -385,13 +385,9 @@ class RerankSettings(BaseModel):
         False,
         description="This value controls whether a reranker should be included in the RAG pipeline.",
     )
-    model: str = Field(
-        "cross-encoder/ms-marco-MiniLM-L-2-v2",
-        description="Rerank model to use. Limited to SentenceTransformer cross-encoder models.",
-    )
-    top_n: int = Field(
-        2,
-        description="This value controls the number of documents returned by the RAG pipeline.",
+    mode: Literal["FlagEmbeddingReranker", "LLMSimilarityReranker", "SimilarityPostprocessor", "ContextualCompressionReranker", "HybridSearchReranker"] = Field(
+        "HybridSearchReranker",
+        description="The rerank mode to use for the RAG pipeline.",
     )
 
 
@@ -577,12 +573,20 @@ class QdrantSettings(BaseModel):
         description="The number of parallel requests to make to Qdrant. Default is 10.",
     )
     enable_hybrid: bool | None = Field(
-        False,
+        True,
         description="If set to True, the Qdrant will use hybrid search.",
     )
     async_mode: bool | None = Field(
         True,
         description="If set to True, the Qdrant will use async mode.",
+    ),
+    similarity_top_k: int | None = Field(
+        2,
+        description="The top two nodes after fusion returned",
+    ),
+    sparse_top_k: int | None = Field(
+        12,
+        description="How many nodes will be retrieved from each dense and sparse query",
     )
 
 
@@ -617,6 +621,14 @@ class ParseSettings(BaseModel):
     async_mode: bool = Field(
         True,
         description="If set to True, the parser will use async mode.",
+    )
+    parsing_instruction: str = Field(
+        "",
+        description="The instructions to use for the parser. This is required for some parsers to work.",
+    )
+    enable_parsing_instruction: bool = Field(
+        False,
+        description="If set to True, the parser will use the parsing instruction.",
     )
     
 

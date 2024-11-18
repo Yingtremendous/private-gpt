@@ -9,6 +9,7 @@ from llama_index.core.vector_stores.types import (
     MetadataFilter,
     MetadataFilters,
 )
+import nest_asyncio
 
 from private_gpt.open_ai.extensions.context_filter import ContextFilter
 from private_gpt.paths import local_data_path
@@ -94,33 +95,37 @@ class VectorStoreComponent:
                 )
 
             # case "qdrant":
-                # try:
-                #     from llama_index.vector_stores.qdrant import (  # type: ignore
-                #         QdrantVectorStore,
-                #     )
-                #     from qdrant_client import QdrantClient  # type: ignore
-                # except ImportError as e:
-                #     raise ImportError(
-                #         "Qdrant dependencies not found, install with `poetry install --extras vector-stores-qdrant`"
-                #     ) from e
+            #     try:
+            #         from llama_index.vector_stores.qdrant import (  # type: ignore
+            #             QdrantVectorStore,
+            #         )
+            #         from qdrant_client import QdrantClient  # type: ignore
+            #     except ImportError as e:
+            #         raise ImportError(
+            #             "Qdrant dependencies not found, install with `poetry install --extras vector-stores-qdrant`"
+            #         ) from e
 
-                # if settings.qdrant is None:
-                #     logger.info(
-                #         "Qdrant config not found. Using default settings."
-                #         "Trying to connect to Qdrant at localhost:6333."
-                #     )
-                #     client = QdrantClient()
-                # else:
-                #     client = QdrantClient(
-                #         **settings.qdrant.model_dump(exclude_none=True)
-                #     )
-                # self.vector_store = typing.cast(
-                #     BasePydanticVectorStore,
-                #     QdrantVectorStore(
-                #         client=client,
-                #         collection_name="make_this_parameterizable_per_api_call",
-                #     ),  # TODO
-                # )
+            #     if settings.qdrant is None:
+            #         logger.info(
+            #             "Qdrant config not found. Using default settings."
+            #             "Trying to connect to Qdrant at localhost:6333."
+            #         )
+            #         client = QdrantClient()
+            #     else:
+                    
+            #         container_name = settings.qdrant.container_name
+            #         qdrant_port = settings.qdrant.port
+            #         collection_name = settings.qdrant.collection_name
+            #         client = QdrantClient(
+            #             host=container_name, port=qdrant_port
+            #         )
+            #     self.vector_store = typing.cast(
+            #         BasePydanticVectorStore,
+            #         QdrantVectorStore(
+            #             client=client,
+            #             collection_name="test4",
+            #         ),  # TODO
+            #     )
                 
             case "qdrant":
                 try:
@@ -138,11 +143,12 @@ class VectorStoreComponent:
                 client = QdrantClient(
                     host=container_name, port=qdrant_port
                 )        
+                aclient = AsyncQdrantClient(host=container_name, port=qdrant_port)
                 if settings.qdrant.async_mode:
                     # using async mode
                     logger.info("-----Using async mode for Qdrant")
-                    nest_asyncio.apply()
-                    aclient = AsyncQdrantClient(host=container_name, port=qdrant_port)
+                    # nest_asyncio.apply()
+                    
                     self.vector_store = typing.cast(
                         BasePydanticVectorStore,
                         QdrantVectorStore(
@@ -150,12 +156,14 @@ class VectorStoreComponent:
                             aclient=aclient,
                             collection_name=collection_name,
                             parallel=settings.qdrant.parallel,
-                            enable_hybrid=settings.qdrant.enable_hybrid,
+                            # enable_hybrid=settings.qdrant.enable_hybrid,
+                            batch_size=20,
+                            # index_doc_id = True,
+                            # text_key = "text",
                         ),
                     )
                 else:
                     logger.info("-----Using sync mode for Qdrant")
-                    client = QdrantClient(url=f"http://{container_name}:{qdrant_port}")
                     self.vector_store = typing.cast(
                     BasePydanticVectorStore,
                     QdrantVectorStore(

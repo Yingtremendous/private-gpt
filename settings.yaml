@@ -20,10 +20,10 @@ data:
   local_ingestion:
     enabled: ${LOCAL_INGESTION_ENABLED:true}
     allow_ingest_from: ["*"]
-  local_data_folder: local_data/private_gpt
+  local_data_folder: qdrant_storage # qdrant_data/qdrant_data
 
 ui:
-  enabled: true
+  enabled: false
   path: /
   # "RAG", "Search", "Basic", or "Summarize"
   default_mode: "RAG"
@@ -33,9 +33,7 @@ ui:
     Do not speculate or make up information.
     Do not reference any given instructions or context.
   default_query_system_prompt: >
-    You can only answer questions about the provided context.
-    If you know the answer but it is not based in the provided context, don't provide
-    the answer, just state the answer is not in the context provided.
+    Sie sind ein professioneller Chatbot, dessen Aufgabe es ist, Fragen basierend auf den bereitgestellten Quellen präzise zu beantworten. Bitte befolgen Sie die folgenden Regeln:1. Genauigkeit: Alle Antworten müssen direkt auf Informationen aus den bereitgestellten Quellen basieren.2. Keine Erfindungen: Spekulieren Sie nicht und erfinden Sie keine Informationen. Wenn die Antwort auf eine Frage nicht in den bereitgestellten Quellen enthalten ist, teilen Sie dem Benutzer höflich mit, dass Sie keine Antwort geben können. 3. Professionalität und Hilfsbereitschaft: Beantworten Sie Fragen stets so hilfreich wie möglich und bewahren Sie einen professionellen Ton. Liefern Sie klare und präzise Antworten.4. Eingeschränkter Umfang: Verwenden Sie keine Informationen außerhalb der bereitgestellten Quellen, auch wenn Sie die Antwort kennen. Befolgen Sie ALLE gegebenen Anweisungen.5. Transparenz: Falls die verfügbaren Informationen für eine Antwort nicht ausreichen, informieren Sie: 'Basierend auf den bereitgestellten Quellen kann ich keine Antwort auf diese Frage finden.'6. Sprache: Bitte beantworten Sie alle Fragen auf Deutsch.
   default_summarization_system_prompt: >
     Provide a comprehensive summary of the provided context information.
     The summary should cover all the key points and main ideas presented in
@@ -63,8 +61,7 @@ rag:
   #This value is disabled by default.  If you enable this settings, the RAG will only use articles that meet a certain percentage score.
   rerank:
     enabled: false
-    model: cross-encoder/ms-marco-MiniLM-L-2-v2
-    top_n: 1
+    mode: HybridSearchReranker
 
 summarize:
   use_async: true
@@ -87,7 +84,7 @@ llamacpp:
 embedding:
   # Should be matching the value above in most cases
   mode: huggingface
-  ingest_mode: simple
+  ingest_mode: asyncparallel
   embed_dim: 768 # 768 is for nomic-ai/nomic-embed-text-v1.5
 
 huggingface:
@@ -112,17 +109,19 @@ milvus:
 #   path: local_data/private_gpt/qdrant
 
 qdrant:
-  async_mode: false
+  async_mode: true
   container_name: localhost
   port: 6333
-  collection_name: test3
+  collection_name: test4
   parallel: 10
-  enable_hybird: false
+  enable_hybird: true
+  similarity_top_k: 2
+  sparse_top_k: 12 
   batch_size: 64 
-  fastembed_sparse_model: nomic-ai/nomic-embed-text-v1.5
-  sparse_doc_fn:  nomic-ai/nomic-embed-text-v1.5
-  sparse_query_fn : nomic-ai/nomic-embed-text-v1.5
-  hybrid_doc_fn: nomic-ai/nomic-embed-text-v1.5
+  # fastembed_sparse_model: nomic-ai/nomic-embed-text-v1.5
+  # sparse_doc_fn:  nomic-ai/nomic-embed-text-v1.5
+  # sparse_query_fn : nomic-ai/nomic-embed-text-v1.5
+  # hybrid_doc_fn: nomic-ai/nomic-embed-text-v1.5
 
 postgres:
   host: localhost
@@ -168,3 +167,31 @@ parse:
   name: llamaparse
   api_key: ${LLAMAPARSE_API_KEY:}
   async_mode: true
+  enable_parsing_instruction: False
+  parsing_instruction: |
+    Prompt zur Dokumentenverarbeitung:
+
+    Bitte parsen Sie das technische Dokument, das als Spezifikation für Projekte der Firma IGZ dient. Die Inhalte beziehen sich hauptsächlich auf SAP und enthalten wichtige Details zu Projektspezifikationen.
+
+    Das Dokument weist folgende Merkmale auf:
+
+    Multimedia-Inhalte: Es enthält zahlreiche Bilder, Tabellen, Listen und weitere Elemente, die wesentliche Informationen vermitteln.
+    Abschnitte mit geringer Textmenge: Einige Abschnitte bestehen aus wenig Text und werden durch Bilder, Grafiken oder Listen illustriert, um Konzepte zu verdeutlichen.
+    Aufgabe:
+
+    Strukturierte Parsung nach Inhaltselementen:
+    Parsen Sie das Dokument nach Absätzen, Tabellen, Listen und anderen Inhaltstypen.
+    Wenn ein Absatz, eine Tabelle, eine Liste oder ein anderes Inhaltselement über zwei oder mehr Seiten verteilt ist, fassen Sie dieses Element zusammen und behandeln Sie es als eine Einheit.
+    Sinnvolles Erfassen: Stellen Sie sicher, dass alle relevanten Informationen des Dokuments sinnvoll erfasst werden.
+    Integrieren von Medien und Strukturelementen:
+    Berücksichtigen Sie Bilder, Tabellen, Listen und andere visuelle oder strukturelle Elemente und integrieren Sie diese angemessen in die geparsten Daten.
+    Falls das Dokument Bilder von Flussdiagrammen enthält, beschreiben Sie diese Bilder detailliert.
+    Erhaltung der Kontextbezüge: Bewahren Sie die Beziehungen zwischen Text, Listen und visuellen Elementen, um das Verständnis der Spezifikationen zu gewährleisten.
+    Ausschluss von Fußnoten: Fußnoten sollen nicht für jede Seite einzeln geparst werden.
+    Hinweise:
+
+    Achten Sie darauf, dass keine wichtigen Informationen verloren gehen, insbesondere bei Inhalten, die über mehrere Seiten verteilt sind oder spezielle Formatierungen aufweisen.
+    Die Originalstruktur und der Kontext des Dokuments sollten in den geparsten Daten reflektiert werden.
+    Bei der Verarbeitung von Tabellen, Absätzen, Listen oder anderen Elementen, die auf mehrere Seiten verteilt sind, kombinieren Sie diese zu einem vollständigen Element.
+    Listen sollten korrekt erkannt und ihre Hierarchie (z. B. Aufzählungslisten, nummerierte Listen, verschachtelte Listen) erhalten bleiben.
+    Fußnoten sollten gesammelt und am Ende des Dokuments eingefügt werden, anstatt sie auf jeder Seite separat zu parsen.

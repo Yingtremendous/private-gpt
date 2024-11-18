@@ -1,0 +1,65 @@
+### IMPORTANT, THIS IMAGE CAN ONLY BE RUN IN LINUX DOCKER
+FROM python:3.11.6-slim-bookworm as base
+ENV PORT=8081
+EXPOSE 8081
+
+# RUN apt-get update && apt-get install -y git
+
+# Install poetry
+RUN pip install pipx
+RUN python3 -m pipx ensurepath
+RUN pipx install poetry
+ENV PATH="/root/.local/bin:$PATH"
+ENV PATH=".venv/bin/:$PATH"
+
+
+RUN pip install python-dotenv PyYAML
+
+# Dependencies to build llama-cpp
+RUN apt update && apt install -y \
+  libopenblas-dev\
+  ninja-build\
+  build-essential\
+  pkg-config\
+  wget
+
+# https://python-poetry.org/docs/configuration/#virtualenvsin-project
+ENV POETRY_VIRTUALENVS_IN_PROJECT=true
+
+FROM base as dependencies
+WORKDIR /home/worker/app
+COPY pyproject.toml poetry.lock ./
+# RUN poetry run pip install logbook==1.7.0 && poetry install --no-cache
+# RUN poetry install sentencepiece
+
+RUN poetry install --extras "llms-openai embeddings-openai vector-stores-qdrant"
+
+FROM base as app
+
+ENV PYTHONUNBUFFERED=1
+
+# Prepare a non-root user
+RUN adduser --group worker
+RUN adduser --system --ingroup worker worker
+WORKDIR /home/worker/app
+
+RUN mkdir local_data; chown worker local_data
+RUN mkdir qdrant_data; chown worker qdrant_data
+# RUN mkdir models; chown worker models
+# RUN mkdir docs_local; chown worker docs_local
+COPY --chown=worker --from=dependencies /home/worker/app/.venv/ .venv
+COPY --chown=worker private_gpt/ private_gpt
+COPY --chown=worker fern/ fern
+COPY --chown=worker *.yaml *.md ./
+COPY --chown=worker scripts/ scripts
+# COPY --chown=worker local_data/ local_data
+COPY --chown=worker qdrant_data/ qdrant_data
+COPY --chown=worker settings.yaml settings.yaml
+COPY --chown=worker settings-openai.yaml settings-openai.yaml
+COPY --chown=worker tiktoken_cache/ tiktoken_cache
+COPY --chown=worker Makefile/ Makefile
+COPY --chown=worker pyproject.toml poetry.lock ./
+ENV PGPT_PROFILES: openai
+ENV PYTHONPATH="$PYTHONPATH:/private_gpt/"
+
+ENTRYPOINT PGPT_PROFILES=openai python -m private_gpt
