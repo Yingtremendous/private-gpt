@@ -1,14 +1,12 @@
 from typing import Literal, Annotated
-import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, Form
+import json
 from pydantic import BaseModel, Field, field_validator
 
 from private_gpt.server.ingest.ingest_service import IngestService
 from private_gpt.server.ingest.model import IngestedDoc
 from private_gpt.server.utils.auth import authenticated
-import logging
-logger = logging.getLogger(__name__)    
 
 ingest_router = APIRouter(prefix="/v1", dependencies=[Depends(authenticated)])
 
@@ -23,6 +21,7 @@ class IngestTextBody(BaseModel):
             "Chinese martial arts."
         ]
     )
+
 
 class IngestResponse(BaseModel):
     object: Literal["list"]
@@ -43,7 +42,6 @@ class DocumentMetadadta(BaseModel):
             raise ValueError("Department cannot be empty")
         return v
 
-
 @ingest_router.post("/ingest", tags=["Ingestion"], deprecated=True)
 def ingest(request: Request, file: UploadFile) -> IngestResponse:
     """Ingests and processes a file.
@@ -54,7 +52,7 @@ def ingest(request: Request, file: UploadFile) -> IngestResponse:
 
 
 @ingest_router.post("/ingest/file", tags=["Ingestion"])
-def ingest_file(request: Request, file: UploadFile) -> IngestResponse:
+def ingest_file(request: Request, file: UploadFile, docmeta: Annotated[str, Form()]) -> IngestResponse:
     """Ingests and processes a file, storing its chunks to be used as context.
 
     The context obtained from files is later used in
@@ -71,11 +69,30 @@ def ingest_file(request: Request, file: UploadFile) -> IngestResponse:
     `/chat/completions`, `/completions`, and `/chunks` APIs.
     """
     service = request.state.injector.get(IngestService)
-    if file.filename is None:
-        raise HTTPException(400, "No file name provided")
-    ingested_documents = service.ingest_bin_data(file.filename, file.file)
-    return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
+    try: 
+        docmeta_dict = json.loads(docmeta)
+        docmeta_obj = DocumentMetadadta(**docmeta_dict)
+        
+        if file.filename is None:
+            raise HTTPException(400, "No file name provided")
 
+        ingested_documents = service.ingest_bin_data(file.filename, file.file, docmeta_obj)
+        return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON format in docmeta"
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid metadata: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred: {str(e)}" 
+        )
 
 @ingest_router.post("/ingest/text", tags=["Ingestion"])
 def ingest_text(request: Request, body: IngestTextBody) -> IngestResponse:
@@ -118,112 +135,3 @@ def delete_ingested(request: Request, doc_id: str) -> None:
     """
     service = request.state.injector.get(IngestService)
     service.delete(doc_id)
-
-##########################################################################
-##########################################################################
-################   async version of ingest_router.py   ####################
-##########################################################################
-@ingest_router.post("/ingest/afile", tags=["Ingestion"])
-async def ingest_file(request: Request, file: UploadFile, docmeta: Annotated[str, Form()]) -> IngestResponse:
-    """Ingests and processes a file, storing its chunks to be used as context.
-
-    The context obtained from files is later used in
-    `/chat/completions`, `/completions`, and `/chunks` APIs.
-
-    Most common document
-    formats are supported, but you may be prompted to install an extra dependency to
-    manage a specific file type.
-
-    A file can generate different Documents (for example a PDF generates one Document
-    per page). All Documents IDs are returned in the response, together with the
-    extracted Metadata (which is later used to improve context retrieval). Those IDs
-    can be used to filter the context used to create responses in
-    `/chat/completions`, `/completions`, and `/chunks` APIs.
-    """
-    logger.info(f"----------  ingestion router  ----------")
-    service = request.state.injector.get(IngestService)
-
-    try: 
-        docmeta_dict = json.loads(docmeta)
-        docmeta_obj = DocumentMetadadta(**docmeta_dict)
-        
-        if file.filename is None:
-            raise HTTPException(400, "No file name provided")
-        
-        ingested_documents = await service.ingest_bin_data(file.filename, file.file, docmeta_obj)
-        return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid JSON format in docmeta"
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid metadata: {str(e)}"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred: {str(e)}" 
-        )
-
-############################## ingest multiple files ##############################
-
-
-@ingest_router.get("/ingest/alist", tags=["Ingestion"])
-async def list_ingested(request: Request) -> IngestResponse:
-    """Lists already ingested Documents including their Document ID and metadata.
-
-    Those IDs can be used to filter the context used to create responses
-    in `/chat/completions`, `/completions`, and `/chunks` APIs.
-    """
-    service = request.state.injector.get(IngestService)
-    ingested_documents = await service.list_ingested()
-    return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
-
-
-
-@ingest_router.post("/ingest/amfile", tags=["Ingestion"])
-async def ingest_file(request: Request, file: UploadFile, docmeta: Annotated[str, Form()]) -> IngestResponse:
-    """Ingests and processes a file, storing its chunks to be used as context.
-
-    The context obtained from files is later used in
-    `/chat/completions`, `/completions`, and `/chunks` APIs.
-
-    Most common document
-    formats are supported, but you may be prompted to install an extra dependency to
-    manage a specific file type.
-
-    A file can generate different Documents (for example a PDF generates one Document
-    per page). All Documents IDs are returned in the response, together with the
-    extracted Metadata (which is later used to improve context retrieval). Those IDs
-    can be used to filter the context used to create responses in
-    `/chat/completions`, `/completions`, and `/chunks` APIs.
-    """
-    service = request.state.injector.get(IngestService)
-
-    try: 
-        docmeta_dict = json.loads(docmeta)
-        docmeta_obj = DocumentMetadadta(**docmeta_dict)
-        
-        if file.filename is None:
-            raise HTTPException(400, "No file name provided")
-        
-        ingested_documents = await service.ingest_bin_data(file.filename, file.file, docmeta_obj)
-        return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid JSON format in docmeta"
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid metadata: {str(e)}"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred: {str(e)}" 
-        )
