@@ -7,7 +7,17 @@ from pydantic import BaseModel, Field, field_validator
 from private_gpt.server.ingest.ingest_service import IngestService
 from private_gpt.server.ingest.model import IngestedDoc
 from private_gpt.server.utils.auth import authenticated
-
+from concurrent.futures import ThreadPoolExecutor
+from typing import List
+from fastapi import Request, UploadFile, Form, HTTPException
+from fastapi.routing import APIRouter
+import json
+from typing_extensions import Annotated
+import asyncio
+import concurrent.futures
+from tempfile import SpooledTemporaryFile
+import logging
+logger = logging.getLogger(__name__)
 ingest_router = APIRouter(prefix="/v1", dependencies=[Depends(authenticated)])
 
 
@@ -42,15 +52,159 @@ class DocumentMetadadta(BaseModel):
             raise ValueError("Department cannot be empty")
         return v
 
-# @ingest_router.post("/ingest", tags=["Ingestion"], deprecated=True)
-# def ingest(request: Request, files: UploadFile) -> IngestResponse:
-#     """Ingests and processes a file.
 
-#     Deprecated. Use ingest/file instead.
-#     """
-#     return ingest_file(request, file)
+@ingest_router.post("/ingest/mfiles", tags=["Ingestion"])
+def ingest_files(request: Request, files: List[UploadFile], docmeta: Annotated[str, Form()]) -> IngestResponse:
+    service = request.state.injector.get(IngestService)
+    
+    try:
+        docmeta_dict = json.loads(docmeta)
+        docmeta_obj = DocumentMetadadta(**docmeta_dict)
+        
+        if not files:
+            raise HTTPException(400, "No files provided")
+        
+        all_ingested_documents = []
+        
+        def process_single_file(file: UploadFile):
+            try:
+                # 读取文件内容
+                contents = file.file.read()
+                # 创建新的临时文件
+                temp_file = SpooledTemporaryFile()
+                temp_file.write(contents)
+                temp_file.seek(0)
+                
+                # 处理文件
+                result = service.ingest_bin_data(file.filename, temp_file, docmeta_obj)
+                
+                temp_file.close()
+                file.file.seek(0)  # 重置文件指针
+                return result
+                
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error processing file {file.filename}: {str(e)}"
+                )
 
+        # 使用线程池并行处理
+        with ThreadPoolExecutor(max_workers=min(len(files), 5)) as executor:
+            futures = [executor.submit(process_single_file, file) for file in files]
+            
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    result = future.result()
+                    if result:
+                        all_ingested_documents.extend(result)
+                except Exception as e:
+                    raise e
 
+        return IngestResponse(
+            object="list",
+            model="private-gpt",
+            data=all_ingested_documents
+        )
+        
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON format in docmeta"
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid metadata: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred: {str(e)}"
+        )
+    finally:
+        # 确保所有文件都被关闭
+        for file in files:
+            file.file.close()
+
+        
+        
+        
+@ingest_router.post("/ingest/mfiles", tags=["Ingestion"])
+def ingest_files(request: Request, files: List[UploadFile], docmeta: Annotated[str, Form()]) -> IngestResponse:
+    service = request.state.injector.get(IngestService)
+    logger.info(f"Received {len(files)} files")
+    try:
+        docmeta_dict = json.loads(docmeta)
+        docmeta_obj = DocumentMetadadta(**docmeta_dict)
+        
+        if not files:
+            raise HTTPException(400, "No files provided")
+        
+        all_ingested_documents = []
+        
+        def process_single_file(file: UploadFile):
+            try:
+                # 读取文件内容
+                contents = file.file.read()
+                # 创建新的临时文件
+                temp_file = SpooledTemporaryFile()
+                temp_file.write(contents)
+                temp_file.seek(0)
+                
+                # 处理文件
+                result = service.ingest_bin_data(file.filename, temp_file, docmeta_obj)
+                
+                temp_file.close()
+                file.file.seek(0)  # 重置文件指针
+                return result
+                
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error processing file {file.filename}: {str(e)}"
+                )
+
+        # 使用线程池并行处理
+        with ThreadPoolExecutor(max_workers=min(len(files), 5)) as executor:
+            logger.info("Starting parallel processing")
+            futures = [executor.submit(process_single_file, file) for file in files]
+            
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    result = future.result()
+                    if result:
+                        all_ingested_documents.extend(result)
+                except Exception as e:
+                    raise e
+
+        return IngestResponse(
+            object="list",
+            model="private-gpt",
+            data=all_ingested_documents
+        )
+        
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON format in docmeta"
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid metadata: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred: {str(e)}"
+        )
+    finally:
+        # 确保所有文件都被关闭
+        for file in files:
+            file.file.close()
+            
+            
+            
 @ingest_router.post("/ingest/file", tags=["Ingestion"])
 def ingest_file(request: Request, file: UploadFile, docmeta: Annotated[str, Form()]) -> IngestResponse:
     """Ingests and processes a file, storing its chunks to be used as context.
