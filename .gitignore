@@ -38,3 +38,5 @@ local_data
 notused
 qdrant_storage
 qdrant_data
+qdrant_storage_test
+
