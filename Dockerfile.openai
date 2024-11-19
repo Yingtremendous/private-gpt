@@ -32,7 +32,7 @@ COPY pyproject.toml poetry.lock ./
 # RUN poetry run pip install logbook==1.7.0 && poetry install --no-cache
 # RUN poetry install sentencepiece
 
-RUN poetry install --extras "llms-openai embeddings-openai vector-stores-qdrant"
+RUN poetry install --extras "llms-openai embeddings-openai vector-stores-qdrant ui"
 
 FROM base as app
 

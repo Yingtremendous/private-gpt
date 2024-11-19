@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 nest_asyncio.apply()
 
-def transform_file_into_documents(file_name: str, file_data: Path, docmeta) -> list[Document]:
+def transform_file_into_documents(file_name: str, file_data: Path) -> list[Document]:
     """同步包装器，用于调用异步文档转换方法"""
     try:
         logger.debug("Creating new event loop")
@@ -31,7 +31,7 @@ def transform_file_into_documents(file_name: str, file_data: Path, docmeta) -> l
         try:
             logger.debug("Starting async document transformation")
             documents = loop.run_until_complete(
-                IngestionHelper.transform_file_into_documents(file_name, file_data, docmeta)
+                IngestionHelper.transform_file_into_documents(file_name, file_data)
             )
             logger.info(f"Documents processed successfully: {len(documents) if documents else 0} documents")
             return documents or []
@@ -51,7 +51,7 @@ class IngestionHelper:
     
     @staticmethod
     async def transform_file_into_documents(
-        file_name: str, file_data: Path, docmeta
+        file_name: str, file_data: Path
     ) -> list[Document]:
         try:
             temp_dir = Path(tempfile.gettempdir())
@@ -61,7 +61,7 @@ class IngestionHelper:
             logger.info(f"Created temporary file with extension: {temp_file}")
 
             try:
-                documents = await IngestionHelper._aload_file_to_documents([temp_file], 5, docmeta)
+                documents = await IngestionHelper._aload_file_to_documents([temp_file], 5)
                 
                 if not documents or not documents[0]:
                     logger.error("No documents generated from file")
@@ -88,8 +88,7 @@ class IngestionHelper:
     @staticmethod
     async def _aload_file_to_documents(
         file_paths: list[Path], 
-        batch_size: int, 
-        docmeta
+        batch_size: int
     ) -> list[Document]:
         doc_paths = ["/home/gu/Documents/private-gpt/pdf/04_20210919_ISpec_FEBI_Operations_Inventur.pdf"]
         
@@ -116,7 +115,7 @@ class IngestionHelper:
                     # parsing_instruction=parsing_instruction
                 )
 
-                async def safe_load(file_paths, docmeta):
+                async def safe_load(file_paths):
                     try:
                         if not file_paths.exists():
                             logger.error(f"File does not exist: {file_paths}")
@@ -131,13 +130,13 @@ class IngestionHelper:
                             logger.warning(f"No documents generated from file: {file_paths}")
                             return []
                         
-                        for doc in documents:
-                            doc.metadata.update({
-                                "department": docmeta.department,
-                                "user": docmeta.user,
-                                "description": docmeta.description,
-                                "tags": docmeta.tags
-                            })
+                        # for doc in documents:
+                        #     doc.metadata.update({
+                        #         "department": docmeta.department,
+                        #         "user": docmeta.user,
+                        #         "description": docmeta.description,
+                        #         "tags": docmeta.tags
+                        #     })
                         return list(documents)
                     except Exception as e:
                         logger.exception(f"Error parsing file {file_paths}: {e}")
@@ -146,12 +145,12 @@ class IngestionHelper:
                 try:
                     all_documents = []
                     if len(file_paths) < batch_size:
-                        results = await asyncio.gather(*[safe_load(doc_path, docmeta) for doc_path in file_paths])
+                        results = await asyncio.gather(*[safe_load(doc_path) for doc_path in file_paths])
                         all_documents = [doc for doc in results if doc]
                     else:
                         for i in range(0, len(file_paths), batch_size):
                             batch = file_paths[i:i+batch_size]
-                            batch_tasks = [safe_load(doc_path, docmeta) for doc_path in batch]
+                            batch_tasks = [safe_load(doc_path) for doc_path in batch]
                             batch_results = await asyncio.gather(*batch_tasks)
                             all_documents.extend([doc for doc in batch_results if doc])
                             pbar.update(len(batch))

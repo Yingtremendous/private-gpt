@@ -118,10 +118,10 @@ class SimpleIngestComponent(BaseIngestComponentWithIndex):
     ) -> None:
         super().__init__(storage_context, embed_model, transformations, *args, **kwargs)
 
-    def ingest(self, file_name: str, file_data: Path, docmeta) -> list[Document]:
+    def ingest(self, file_name: str, file_data: Path) -> list[Document]:
         logger.info("Ingesting file_name=%s", file_name)
         logger.info(f"############ starting parsing the file")
-        documents = transform_file_into_documents(file_name, file_data, docmeta)
+        documents = transform_file_into_documents(file_name, file_data)
         logger.info(f"############ finished parsing the file")
         logger.info(
             "Transformed file=%s into count=%s documents", file_name, len(documents)
@@ -132,14 +132,14 @@ class SimpleIngestComponent(BaseIngestComponentWithIndex):
     def bulk_ingest(self, files: list[tuple[str, Path]]) -> list[Document]:
         saved_documents = []
         for file_name, file_data in files:
-            documents = IngestionHelper.transform_file_into_documents(
+            documents = transform_file_into_documents(
                 file_name, file_data
             )
             saved_documents.extend(self._save_docs(documents))
         return saved_documents
 
     def _save_docs(self, documents: list[Document]) -> list[Document]:
-        logger.debug("Transforming count=%s documents into nodes", len(documents))
+        # logger.debug("Transforming count=%s documents into nodes", len(documents))
         with self._index_thread_lock:
             for document in documents:
                 self._index.insert(document, show_progress=True)
@@ -203,7 +203,7 @@ class BatchIngestComponent(BaseIngestComponentWithIndex):
         return self._save_docs(documents)
 
     def _save_docs(self, documents: list[Document]) -> list[Document]:
-        logger.debug("Transforming count=%s documents into nodes", len(documents))
+        # logger.debug("Transforming count=%s documents into nodes", len(documents))
         nodes = run_transformations(
             documents,  # type: ignore[arg-type]
             self.transformations,
@@ -285,7 +285,7 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
         return documents
 
     def _save_docs(self, documents: list[Document]) -> list[Document]:
-        logger.debug("Transforming count=%s documents into nodes", len(documents))
+        # logger.debug("Transforming count=%s documents into nodes", len(documents))
         nodes = run_transformations(
             documents,  # type: ignore[arg-type]
             self.transformations,

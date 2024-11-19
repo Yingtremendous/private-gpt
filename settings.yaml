@@ -23,7 +23,7 @@ data:
   local_data_folder: qdrant_data/qdrant_data
 
 ui:
-  enabled: false
+  enabled: true
   path: /
   # "RAG", "Search", "Basic", or "Summarize"
   default_mode: "RAG"
@@ -110,7 +110,7 @@ milvus:
 
 qdrant:
   async_mode: true
-  container_name: localhost
+  container_name: robertqdrant
   port: 6333
   collection_name: test4
   parallel: 10
